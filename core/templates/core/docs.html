@@ -42,6 +42,7 @@
         <div class="eyebrow">{{ cat.vendor }}</div>
         <h2 class="h6 mb-1">{{ cat.label }}</h2>
         <div class="mono small text-body-secondary mb-2">{{ cat.database }} &middot; schema [{{ cat.schema }}]</div>
+        <p class="small mb-2">{{ cat.purpose }}</p>
         {% if cat.error %}<div class="alert alert-danger py-2 small mb-0">{{ cat.error }}</div>{% else %}
         <table class="table table-sm mb-0">
           <tbody>
@@ -94,6 +95,7 @@
     <h3 class="h5 mb-0">{{ cat.label }}</h3>
     <span class="mono small text-body-secondary">{{ cat.database }} &middot; [{{ cat.schema }}]</span>
   </div>
+  <p class="mb-1" style="max-width:90ch">{{ cat.purpose }}</p>
   <p class="small text-body-secondary" style="max-width:90ch">{{ cat.blurb }}</p>
 
   {% for name, meta in cat.tables.items %}

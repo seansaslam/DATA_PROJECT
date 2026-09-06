@@ -24,7 +24,8 @@ def read_catalog(system_key: str) -> dict:
     schema = spec.schema
     out: dict = {"system": system_key, "label": spec.label, "vendor": spec.vendor,
                  "database": spec.default_database, "schema": schema,
-                 "blurb": spec.blurb, "tables": {}, "error": None}
+                 "purpose": spec.purpose, "blurb": spec.blurb,
+                 "tables": {}, "error": None}
     try:
         with connections.open(system_key, autocommit=True) as conn:
             cur = conn.cursor()

@@ -59,7 +59,8 @@ class SystemSpec:
     schema: str
     ddl_file: str
     tables: tuple[TableSpec, ...]
-    blurb: str
+    purpose: str          # what this system IS, in one plain sentence
+    blurb: str            # the same thing for a data engineer, with the keys
 
     @property
     def ddl_path(self) -> Path:
@@ -93,6 +94,10 @@ WELLMASTER = SystemSpec(
     key="wellmaster", label="Well Master", short="WM", vendor="In-house master data",
     default_database="WELL_MASTER_DB", schema="wm", ddl_file="10_wellmaster.sql",
     tables=(WM_MASTER,),
+    purpose=("Where a well is and who owns it. The well information system: name, "
+             "location, pad and facility, county and basin, spud and completion "
+             "dates, and the title interests -- working interest and net revenue "
+             "interest. No volumes of any kind live here."),
     blurb=("The corporate well header of record. One slim row per well keyed by the "
            "14-digit API/UWI, covering 603 operated and 1,400 non-operated wells "
            "across Texas."),
@@ -139,6 +144,10 @@ PROCOUNT = SystemSpec(
     key="procount", label="ProCount", short="PC", vendor="Quorum / Merrick ProCount",
     default_database="PROCOUNT_DB", schema="pc", ddl_file="20_procount.sql",
     tables=(PC_COMPLETION, PC_DAILY, PC_DOWNTIME),
+    purpose=("What the wells actually produced and sold. Daily production and "
+             "sales volumes -- oil, gas, NGL and water, gross and net -- one row "
+             "per well per day, with the downtime that explains any day that "
+             "lost hours. This is actuals, not plan."),
     blurb=("Production accounting: the allocated daily sales volumes for operated "
            "wells. Keyed on MERRICK_ID, ProCount's own completion surrogate, with "
            "the API carried as an attribute."),
@@ -177,6 +186,10 @@ ARIES = SystemSpec(
     key="aries", label="ARIES", short="AC", vendor="Landmark / Halliburton ARIES",
     default_database="ARIES_DB", schema="ac", ddl_file="30_aries.sql",
     tables=(AC_PROPERTY, AC_DAILY),
+    purpose=("What the wells are expected to produce -- the forecast, and so the "
+             "budget. A daily type-curve projection per operated property for the "
+             "whole year, restated whenever engineering re-runs a type curve. "
+             "This is plan, not actuals."),
     blurb=("Reserves and forecasting. Daily type-curve forecast for operated wells "
            "only, keyed on PROPNUM, the ARIES property id."),
 )
