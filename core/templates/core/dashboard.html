@@ -1,0 +1,207 @@
+{% extends "core/base.html" %}
+{% block title %}Dashboard &middot; {{ company }}{% endblock %}
+{% block content %}
+
+<div class="d-flex flex-wrap align-items-baseline gap-3 mb-3">
+  <h1 class="h4 mb-0">Operations overview</h1>
+  <span class="text-body-secondary">603 operated &middot; 1,400 non-operated &middot; Texas &middot; producing since 1 Jan 2026</span>
+</div>
+
+<div class="row g-3 mb-3" id="summary"></div>
+
+<div class="row g-3">
+  <!-- ------------------------------------------------ simulator controls -->
+  <div class="col-xl-5">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Simulator</span>
+        <span class="eyebrow" id="ticker-state">idle</span>
+      </div>
+      <div class="card-body">
+
+        <div class="eyebrow mb-2">Build</div>
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+          <button class="btn btn-sm btn-danger" id="btn-reset">Rebuild all databases</button>
+          <div class="form-check form-switch ms-1">
+            <input class="form-check-input" type="checkbox" id="drop-first" checked>
+            <label class="form-check-label small" for="drop-first">drop tables first</label>
+          </div>
+        </div>
+        <p class="small text-body-secondary">
+          Creates all three schemas and loads about 358,000 rows: 2,003 wells, ProCount
+          daily production from first production to today, and a full-year ARIES
+          forecast. Takes a few minutes.
+        </p>
+
+        <hr>
+        <div class="eyebrow mb-2">Random activity</div>
+        <div class="row g-2 mb-2">
+          <div class="col-auto">
+            <label class="form-label small mb-1">scale</label>
+            <input type="number" class="form-control form-control-sm" id="scale" value="1" min="1" max="20" style="width:80px">
+          </div>
+          <div class="col">
+            <label class="form-label small mb-1">activities</label>
+            <div class="d-flex flex-wrap gap-2">
+              <div class="form-check form-check-inline"><input class="form-check-input act" type="checkbox" value="advance_day" id="a1" checked><label class="form-check-label small" for="a1">new production day</label></div>
+              <div class="form-check form-check-inline"><input class="form-check-input act" type="checkbox" value="revise_allocations" id="a2" checked><label class="form-check-label small" for="a2">allocation revisions</label></div>
+              <div class="form-check form-check-inline"><input class="form-check-input act" type="checkbox" value="edit_wells" id="a3" checked><label class="form-check-label small" for="a3">well master edits</label></div>
+              <div class="form-check form-check-inline"><input class="form-check-input act" type="checkbox" value="revise_forecast" id="a4" checked><label class="form-check-label small" for="a4">forecast revisions</label></div>
+              <div class="form-check form-check-inline"><input class="form-check-input act" type="checkbox" value="new_wells" id="a5" checked><label class="form-check-label small" for="a5">new wells online</label></div>
+              <div class="form-check form-check-inline"><input class="form-check-input act" type="checkbox" value="deletes" id="a6" checked><label class="form-check-label small" for="a6">hard deletes</label></div>
+            </div>
+          </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <button class="btn btn-sm btn-primary" id="btn-churn">Simulate operations</button>
+          <button class="btn btn-sm btn-outline-secondary" id="btn-etl">Read change feed</button>
+        </div>
+        <p class="small text-body-secondary mt-2 mb-0">
+          Hard deletes are the change an <span class="mono">UPDATED_TS</span> watermark can never see.
+          Simulate, then read the feed under each strategy and compare
+          <span class="mono">rows read</span> on the <a href="/etl/">change feed</a> page.
+        </p>
+
+        <hr>
+        <div class="eyebrow mb-2">Live mode</div>
+        <div class="row g-2 align-items-end">
+          <div class="col-auto">
+            <label class="form-label small mb-1">every (s)</label>
+            <input type="number" class="form-control form-control-sm" id="interval" value="60" min="10" max="3600" style="width:90px">
+          </div>
+          <div class="col-auto">
+            <div class="form-check form-switch mb-1">
+              <input class="form-check-input" type="checkbox" id="tick-etl">
+              <label class="form-check-label small" for="tick-etl">read change feed each tick</label>
+            </div>
+          </div>
+          <div class="col-auto">
+            <button class="btn btn-sm btn-success" id="btn-tick-start">Start</button>
+            <button class="btn btn-sm btn-outline-secondary" id="btn-tick-stop">Stop</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------ console -->
+  <div class="col-xl-7">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Activity log</span>
+        <button class="btn btn-sm btn-outline-secondary py-0" id="btn-clear">clear</button>
+      </div>
+      <div class="card-body">
+        <div class="console" id="console"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2 class="h6 mt-4 mb-2 eyebrow">Source systems</h2>
+<div class="row g-3" id="cards"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const con = new JobConsole(document.getElementById('console'));
+const TONE = {wellmaster:'sys-wm', procount:'sys-pc', aries:'sys-ac', dw:'sys-dw'};
+const MODE_COLOR = {FULL:'secondary', INCREMENTAL:'info', CT:'primary', CDC:'success'};
+
+function summaryCard(label, value, sub) {
+  return `<div class="col-6 col-md-3 col-xl-2">
+    <div class="card h-100"><div class="card-body py-3">
+      <div class="eyebrow">${label}</div>
+      <div class="stat">${value}</div>
+      <div class="small text-body-secondary">${sub || ''}</div>
+    </div></div></div>`;
+}
+
+function renderSummary(c) {
+  const el = document.getElementById('summary');
+  if (!c || !c.wells) { el.innerHTML =
+    `<div class="col-12"><div class="alert alert-warning mb-0">
+     No well data yet. Press <strong>Rebuild all databases</strong> to load the company.</div></div>`;
+    return; }
+  el.innerHTML =
+    summaryCard('Wells', fmt(c.wells), `${fmt(c.operated)} operated / ${fmt(c.non_operated)} outside`) +
+    summaryCard('Shut in', fmt(c.shut_in), 'operated wells') +
+    summaryCard('Latest day', c.last_prod_date || '&mdash;', `${fmt(c.last_wells)} wells reporting`) +
+    summaryCard('Oil', fmt(Math.round(c.last_oil || 0)), 'bbl, latest day gross') +
+    summaryCard('Gas', fmt(Math.round(c.last_gas || 0)), 'mcf, latest day gross') +
+    summaryCard('BOE', fmt(Math.round(c.last_boe || 0)), 'boe, latest day gross');
+}
+
+function systemCard(s) {
+  const tracking = s.ok ? `
+    <div class="d-flex gap-3 small mb-2">
+      <span><span class="dot ${s.db_change_tracking ? 'dot-ok' : 'dot-idle'}"></span> CT database</span>
+      <span><span class="dot ${s.db_cdc ? 'dot-ok' : 'dot-idle'}"></span> CDC database</span>
+      ${s.ct_current_version != null ? `<span class="text-body-secondary mono">v${s.ct_current_version}</span>` : ''}
+    </div>` : '';
+  const rows = (s.tables || []).map(t => `
+    <tr><td class="mono">${esc(t.table)}</td>
+        <td class="small text-body-secondary">${esc(t.label || '')}</td>
+        <td class="num">${fmt(t.rows)}</td>
+        <td class="text-center">${t.ct ? '<span class="badge text-bg-primary">CT</span>' : ''}
+            ${t.cdc ? '<span class="badge text-bg-success">CDC</span>' : ''}</td></tr>`).join('');
+  return `<div class="col-xl-4 col-lg-6">
+    <div class="card h-100 ${TONE[s.key]}"><div class="tone-bar"></div>
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <a href="/system/${s.key}/" class="text-decoration-none">${esc(s.label)}</a>
+        <span class="badge badge-mode text-bg-${MODE_COLOR[s.mode] || 'secondary'}">${esc(s.mode)}</span>
+      </div>
+      <div class="card-body">
+        <div class="small text-body-secondary mb-1 mono">${esc(s.target || '')}</div>
+        <div class="small text-body-secondary mb-2">${esc(s.db_type || '')} &middot; ${esc(s.vendor)}</div>
+        ${s.ok ? tracking : `<div class="alert alert-danger py-2 small">${esc(s.error || 'not reachable')}</div>`}
+        <div class="scroll-x"><table class="table table-sm mb-0"><tbody>${rows}</tbody></table></div>
+      </div>
+    </div></div>`;
+}
+
+async function refresh() {
+  const r = await get('/api/overview');
+  renderSummary(r.company);
+  document.getElementById('cards').innerHTML = r.systems.map(systemCard).join('');
+  const t = r.ticker;
+  document.getElementById('ticker-state').textContent =
+    t.running ? `live · every ${t.interval}s · ${t.ticks} ticks` : 'idle';
+  document.getElementById('nav-ticker').innerHTML =
+    `<span class="dot ${t.running ? 'dot-ok' : 'dot-idle'}"></span>
+     <span class="ms-1">${t.running ? 'live · ' + t.interval + 's' : 'idle'}</span>`;
+  if (t.last_error) con.write('ticker: ' + t.last_error, 'er');
+}
+
+const buttons = ['btn-reset','btn-churn','btn-etl'].map(id => document.getElementById(id));
+
+document.getElementById('btn-reset').onclick = async () => {
+  if (!confirm('Rebuild every database? This deletes and reloads all simulated data.')) return;
+  con.write('--- rebuilding ---', 'hd');
+  await con.run('/api/reset', {drop: document.getElementById('drop-first').checked ? '1' : '0'}, buttons);
+  refresh();
+};
+document.getElementById('btn-churn').onclick = async () => {
+  const acts = [...document.querySelectorAll('.act:checked')].map(c => c.value);
+  await con.run('/api/churn', {scale: document.getElementById('scale').value, activity: acts}, buttons);
+  refresh();
+};
+document.getElementById('btn-etl').onclick = async () => {
+  await con.run('/api/etl/run', {}, buttons); refresh();
+};
+document.getElementById('btn-clear').onclick = () => con.clear();
+document.getElementById('btn-tick-start').onclick = async () => {
+  const r = await post('/api/ticker', {action:'start',
+    interval: document.getElementById('interval').value, scale: document.getElementById('scale').value,
+    run_etl: document.getElementById('tick-etl').checked ? '1' : '0'});
+  con.write(`live mode on: a churn cycle every ${r.ticker.interval}s`, 'ok'); refresh();
+};
+document.getElementById('btn-tick-stop').onclick = async () => {
+  await post('/api/ticker', {action:'stop'}); con.write('live mode off'); refresh();
+};
+
+refresh();
+setInterval(refresh, 15000);
+</script>
+{% endblock %}

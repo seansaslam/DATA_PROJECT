@@ -1,0 +1,28 @@
+# Secrets -- real credentials live here, only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# App state: connection profiles (WITH PASSWORDS), watermarks, run history
+app_state.sqlite3
+*.sqlite3
+*.sqlite3-journal
+
+# Runtime artefacts from start.ps1
+app.log
+app.err
+app.pid
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

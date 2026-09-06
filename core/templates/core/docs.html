@@ -1,0 +1,182 @@
+{% extends "core/base.html" %}
+{% block title %}Data dictionary &amp; ERD &middot; {{ company }}{% endblock %}
+{% block content %}
+
+<style>
+  @media print {
+    .navbar, .no-print { display:none !important; }
+    body { background:#fff; font-size:10.5px; }
+    .card { break-inside:avoid; box-shadow:none; }
+    a { color:inherit; text-decoration:none; }
+  }
+  .doc-toc a { display:block; padding:2px 0; font-size:13px; text-decoration:none; }
+  .col-desc { white-space:normal; min-width:34ch; }
+  pre.sql { background:#0b1220; color:#dbe3ee; border-radius:8px; padding:14px 16px;
+            font-size:12px; line-height:1.6; overflow-x:auto; }
+  .watch li { margin-bottom:.35rem; }
+  h2.sec { font-size:19px; font-weight:700; margin:2rem 0 .75rem; padding-top:.5rem;
+           border-top:2px solid #e2e8f0; }
+  h3.tbl { font-size:15px; font-weight:700; font-family:var(--mono); margin:0; }
+</style>
+
+<div class="d-flex flex-wrap align-items-baseline gap-3 mb-1">
+  <h1 class="h4 mb-0">Data dictionary &amp; ERD</h1>
+  <span class="text-body-secondary">{{ company }} &mdash; source estate hand-over</span>
+  <button class="btn btn-sm btn-outline-secondary no-print ms-auto" onclick="window.print()">
+    Print / save as PDF</button>
+</div>
+<p class="text-body-secondary mb-3" style="max-width:90ch">
+  Three independent vendor databases on one SQL Server, with no foreign keys between
+  or within them. Structure below is read from the live catalog every time this page
+  loads, so it cannot drift from what is actually deployed; the descriptions, grain
+  notes and join guidance are maintained in
+  <span class="mono">documentation/descriptions.py</span> and
+  <span class="mono">documentation/joins.py</span>.
+</p>
+
+<div class="row g-3 mb-4">
+  {% for key, cat in dictionary.items %}
+  <div class="col-lg-4">
+    <div class="card h-100 sys-{{ cat.schema }}"><div class="tone-bar"></div>
+      <div class="card-body">
+        <div class="eyebrow">{{ cat.vendor }}</div>
+        <h2 class="h6 mb-1">{{ cat.label }}</h2>
+        <div class="mono small text-body-secondary mb-2">{{ cat.database }} &middot; schema [{{ cat.schema }}]</div>
+        {% if cat.error %}<div class="alert alert-danger py-2 small mb-0">{{ cat.error }}</div>{% else %}
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for name, meta in cat.tables.items %}
+            <tr><td><a href="#t-{{ cat.schema }}-{{ name }}" class="mono text-decoration-none">{{ cat.schema }}.{{ name }}</a></td>
+                <td class="num">{{ meta.rows }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- ============================================================== ERD -->
+<h2 class="sec" id="erd">Entity relationship diagram</h2>
+<div class="mb-3">{{ erd_svg|safe }}</div>
+
+<div class="card mb-4">
+  <div class="card-header">Relationships, and what each one hides</div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0 align-top">
+      <thead class="table-light">
+        <tr><th>From</th><th>To</th><th>Card.</th><th>Scope</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+      {% for e in edges %}
+        <tr>
+          <td class="mono small">{{ e.left }}</td>
+          <td class="mono small">{{ e.right }}</td>
+          <td class="small text-nowrap">{{ e.card }}</td>
+          <td class="small">{% if e.cross_db %}<span class="badge text-bg-warning">cross-database</span>
+              {% else %}<span class="badge text-bg-light border">same database</span>{% endif %}</td>
+          <td class="small" style="min-width:40ch">{{ e.note }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ==================================================== DATA DICTIONARY -->
+<h2 class="sec" id="dictionary">Data dictionary</h2>
+
+{% for key, cat in dictionary.items %}
+  {% if not cat.error %}
+  <div class="d-flex align-items-baseline gap-2 mt-4 mb-2">
+    <h3 class="h5 mb-0">{{ cat.label }}</h3>
+    <span class="mono small text-body-secondary">{{ cat.database }} &middot; [{{ cat.schema }}]</span>
+  </div>
+  <p class="small text-body-secondary" style="max-width:90ch">{{ cat.blurb }}</p>
+
+  {% for name, meta in cat.tables.items %}
+  <div class="card mb-3" id="t-{{ cat.schema }}-{{ name }}">
+    <div class="card-header">
+      <div class="d-flex flex-wrap justify-content-between align-items-baseline gap-2">
+        <h3 class="tbl">{{ cat.schema }}.{{ name }}</h3>
+        <span class="small text-body-secondary">
+          <span class="mono">{{ meta.rows }}</span> rows &middot;
+          PK <span class="mono">{{ meta.pk|join:" + " }}</span>
+        </span>
+      </div>
+      {% if meta.grain %}<div class="small text-body-secondary mt-1"><strong>Grain.</strong> {{ meta.grain }}</div>{% endif %}
+      {% if meta.note %}<div class="small text-body-secondary mt-1">{{ meta.note }}</div>{% endif %}
+    </div>
+    <div class="card-body p-0">
+      <div class="scroll-x">
+      <table class="table table-sm table-striped mb-0">
+        <thead class="table-light">
+          <tr><th style="width:3ch">#</th><th>Column</th><th>Type</th><th>Null</th>
+              <th>Key</th><th>Default</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+        {% for c in meta.columns %}
+          <tr>
+            <td class="text-body-tertiary small">{{ c.position }}</td>
+            <td class="mono {% if c.name in meta.pk %}fw-bold{% endif %}">{{ c.name }}</td>
+            <td class="mono small text-body-secondary">{{ c.type }}</td>
+            <td class="small">{% if c.nullable %}<span class="text-body-tertiary">null</span>
+                {% else %}<span class="text-danger-emphasis">not null</span>{% endif %}</td>
+            <td class="small">{% if c.name in meta.pk %}<span class="badge text-bg-dark">PK</span>{% endif %}</td>
+            <td class="mono small text-body-tertiary">{{ c.default }}</td>
+            <td class="small col-desc">{{ c.description }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+{% endfor %}
+
+<!-- ========================================================= JOIN GUIDE -->
+<h2 class="sec" id="joins">Joining the three systems</h2>
+<p class="text-body-secondary" style="max-width:90ch">
+  <span class="mono">API_UWI</span> is the only value common to all three systems, and it
+  is the primary key of exactly one of them. ProCount keys on
+  <span class="mono">MERRICK_ID</span>, ARIES on <span class="mono">PROPNUM</span>, and
+  both carry the API as an ordinary attribute that their own teams maintain. The SQL below
+  is written as it would look once all three schemas have landed in Snowflake.
+</p>
+
+{% for j in joins %}
+<div class="card mb-3">
+  <div class="card-header">{{ j.title }}</div>
+  <div class="card-body">
+    <p class="small text-body-secondary" style="max-width:90ch">{{ j.why }}</p>
+    <pre class="sql mb-3">{{ j.sql }}</pre>
+    <div class="eyebrow mb-1">Watch out</div>
+    <ul class="small watch mb-0">
+      {% for w in j.watch %}<li>{{ w }}</li>{% endfor %}
+    </ul>
+  </div>
+</div>
+{% endfor %}
+
+<!-- ========================================================== INGESTION -->
+<h2 class="sec" id="ingestion">Ingestion notes</h2>
+<div class="row g-3">
+  {% for n in ingestion %}
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">{{ n.heading }}</div>
+      <div class="card-body">
+        <ul class="small watch mb-0">
+          {% for b in n.body %}<li>{{ b }}</li>{% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}

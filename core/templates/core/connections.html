@@ -1,0 +1,132 @@
+{% extends "core/base.html" %}
+{% block title %}Connections &middot; {{ company }}{% endblock %}
+{% block content %}
+
+<h1 class="h4 mb-1">Database connections</h1>
+<p class="text-body-secondary mb-3" style="max-width:85ch">
+  Each application database is configured independently &mdash; its own type, server,
+  credentials and port. Nothing else in the app branches on connection type, so you can
+  move ProCount to Azure SQL and leave the Well Master on the local SQL Server, and every
+  page, load strategy and document keeps working.
+  Credentials are stored in the app's local SQLite file
+  (<span class="mono">app_state.sqlite3</span>), not in source.
+</p>
+
+<form method="post">
+  {% csrf_token %}
+  <div class="row g-3">
+    {% for p in profiles %}
+    {% with spec=specs|default_if_none:'' %}
+    <div class="col-xl-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>{{ p.label }}</span>
+          <span class="mono small text-body-secondary">{{ p.system_key }}</span>
+        </div>
+        <div class="card-body">
+          <div class="row g-2">
+            <div class="col-12">
+              <label class="form-label small mb-1">Database type</label>
+              <select class="form-select form-select-sm" name="{{ p.system_key }}__db_type">
+                {% for d in dialects %}
+                <option value="{{ d.key }}" {% if d.key == p.db_type %}selected{% endif %}>{{ d.label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-8">
+              <label class="form-label small mb-1">Server</label>
+              <input class="form-control form-control-sm mono" name="{{ p.system_key }}__server" value="{{ p.server }}">
+            </div>
+            <div class="col-4">
+              <label class="form-label small mb-1">Port</label>
+              <input class="form-control form-control-sm mono" name="{{ p.system_key }}__port" value="{{ p.port }}">
+            </div>
+            <div class="col-12">
+              <label class="form-label small mb-1">Database</label>
+              <input class="form-control form-control-sm mono" name="{{ p.system_key }}__database" value="{{ p.database }}">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">Username</label>
+              <input class="form-control form-control-sm mono" name="{{ p.system_key }}__username" value="{{ p.username }}">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">Password
+                <span class="text-body-tertiary">(blank keeps current)</span></label>
+              <input type="password" class="form-control form-control-sm" name="{{ p.system_key }}__password"
+                     placeholder="{% if p.password %}unchanged{% else %}not set{% endif %}" autocomplete="new-password">
+            </div>
+            <div class="col-12">
+              <label class="form-label small mb-1">Extra ODBC options
+                <span class="text-body-tertiary">optional, e.g. <span class="mono">Authentication=ActiveDirectoryPassword</span></span></label>
+              <input class="form-control form-control-sm mono" name="{{ p.system_key }}__extra_options" value="{{ p.extra_options }}">
+            </div>
+          </div>
+          <div class="d-flex align-items-center gap-2 mt-3">
+            <button type="button" class="btn btn-sm btn-outline-primary test-btn"
+                    data-system="{{ p.system_key }}">Test connection</button>
+            <div class="small" id="test-{{ p.system_key }}"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endwith %}
+    {% endfor %}
+  </div>
+
+  <div class="d-flex gap-2 mt-3">
+    <button class="btn btn-primary" type="submit">Save all connections</button>
+    <button class="btn btn-outline-secondary" type="button" id="test-all">Test all</button>
+  </div>
+</form>
+
+<div class="card mt-4">
+  <div class="card-header">What each database type supports</div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead class="table-light"><tr><th>Type</th><th>Driver</th><th>Full</th><th>Incremental</th>
+        <th>Change Tracking</th><th>CDC</th><th>Notes</th></tr></thead>
+      <tbody>
+        {% for d in dialects %}
+        <tr>
+          <td class="fw-semibold">{{ d.label }}</td>
+          <td class="mono small">{{ d.driver }}</td>
+          <td>&#10003;</td><td>&#10003;</td>
+          <td>{% if d.supports_change_tracking %}&#10003;{% else %}&mdash;{% endif %}</td>
+          <td>{% if d.supports_cdc %}&#10003;{% if d.cdc_needs_sysadmin %} <span class="badge text-bg-warning">sysadmin</span>{% endif %}{% else %}&mdash;{% endif %}</td>
+          <td class="small text-body-secondary" style="max-width:44ch">{{ d.notes }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="alert alert-secondary mt-3 small mb-0">
+  <strong>Enabling CDC on SQL Server.</strong> The service account is
+  <span class="mono">db_owner</span>, which covers all of Change Tracking, but
+  <span class="mono">sys.sp_cdc_enable_db</span> needs sysadmin. Run once per database:
+  <div class="mono mt-2">USE [PROCOUNT_DB];<br>EXEC sys.sp_cdc_enable_db;</div>
+  CDC also needs SQL Server Agent running &mdash; the capture job is what fills the change
+  tables. Azure SQL Database needs neither: <span class="mono">db_owner</span> can enable
+  CDC itself and the capture runs as a managed process.
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function testOne(key) {
+  const el = document.getElementById('test-' + key);
+  el.innerHTML = '<span class="text-body-secondary">testing ...</span>';
+  const r = await get('/api/test/' + key);
+  if (!r.ok) { el.innerHTML = `<span class="text-danger">✖ ${esc(r.error)}</span>`; return; }
+  el.innerHTML = `<span class="text-success">✔ connected</span>
+    <span class="text-body-secondary">${esc(r.login)}@${esc(r.database)} ·
+    ${esc(r.edition)} · ${r.table_count} tables · ${r.elapsed_ms} ms
+    ${r.is_db_owner ? '· db_owner' : ''}${r.is_sysadmin ? ' · sysadmin' : ''}</span>`;
+}
+document.querySelectorAll('.test-btn').forEach(b => b.onclick = () => testOne(b.dataset.system));
+document.getElementById('test-all').onclick = () =>
+  document.querySelectorAll('.test-btn').forEach(b => testOne(b.dataset.system));
+</script>
+{% endblock %}

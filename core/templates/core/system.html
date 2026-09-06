@@ -1,0 +1,139 @@
+{% extends "core/base.html" %}
+{% block title %}{{ system.label }} &middot; {{ company }}{% endblock %}
+{% block content %}
+
+<div class="d-flex flex-wrap align-items-baseline gap-3 mb-1">
+  <h1 class="h4 mb-0">{{ system.label }}</h1>
+  <span class="badge text-bg-light border">{{ system.vendor }}</span>
+  <span class="mono small text-body-secondary">{{ profile.database }} &middot; schema [{{ system.schema }}]</span>
+  <a class="small" href="/connections/">change connection</a>
+</div>
+<p class="text-body-secondary mb-3" style="max-width:70ch">{{ system.blurb }}</p>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-7">
+    <div class="card h-100">
+      <div class="card-header">Connection &amp; change tracking</div>
+      <div class="card-body" id="status"></div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-header">Ingestion strategy</div>
+      <div class="card-body">
+        <div class="d-flex align-items-center gap-3 mb-2">
+          <span class="eyebrow">active</span>
+          <span class="badge badge-mode fs-6 text-bg-secondary" id="mode-badge">&mdash;</span>
+        </div>
+        <div class="btn-group btn-group-sm mb-2" role="group">
+          {% for s in strategies %}
+          <button class="btn btn-outline-primary mode-btn" data-mode="{{ s }}">{{ s }}</button>
+          {% endfor %}
+        </div>
+        <p class="small text-body-secondary mb-2">
+          Arming a strategy enables what it needs on the source and clears this system's
+          watermarks, so the next read starts from a true baseline and the numbers stay
+          comparable between modes. Full control, including the destructive table
+          rebuild, is on the <a href="/etl/">change feed</a> page.
+        </p>
+        <button class="btn btn-sm btn-primary" id="btn-run">Read change feed for this system</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Records</span>
+    <div class="d-flex gap-2 align-items-center">
+      <select class="form-select form-select-sm" data-role="table" style="width:auto">
+        {% for t in system.tables %}
+        <option value="{{ t.name }}">{{ t.schema }}.{{ t.name }} &mdash; {{ t.label }}</option>
+        {% endfor %}
+      </select>
+      <input class="form-control form-control-sm" data-role="q" placeholder="search ..." style="width:220px">
+      <select class="form-select form-select-sm" data-role="size" style="width:auto">
+        <option>50</option><option>100</option><option>250</option><option>500</option>
+      </select>
+    </div>
+  </div>
+  <div class="card-body pt-2" id="browser" data-table="{{ table_names.0 }}">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <div class="small text-body-secondary" data-role="info"></div>
+      <div class="btn-group btn-group-sm">
+        <button class="btn btn-outline-secondary" data-role="prev">&larr; prev</button>
+        <button class="btn btn-outline-secondary" data-role="next">next &rarr;</button>
+      </div>
+    </div>
+    <div class="scroll-x" style="max-height:60vh">
+      <table class="table table-sm table-striped table-hover table-records mb-0">
+        <thead class="table-light sticky-actions" data-role="head"></thead>
+        <tbody data-role="body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Log</div>
+  <div class="card-body"><div class="console" id="console" style="height:200px"></div></div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SYSTEM = "{{ system.key }}";
+const con = new JobConsole(document.getElementById('console'));
+const browser = new RecordBrowser(document.getElementById('browser'), SYSTEM);
+const MODE_COLOR = {FULL:'secondary', INCREMENTAL:'info', CT:'primary', CDC:'success'};
+
+function capRow(name, ok) {
+  return `<span class="me-3"><span class="dot ${ok ? 'dot-ok' : 'dot-idle'}"></span> ${esc(name)}</span>`;
+}
+
+async function refresh() {
+  const s = await get(`/api/system/${SYSTEM}/status`);
+  const badge = document.getElementById('mode-badge');
+  badge.textContent = s.mode || '—';
+  badge.className = 'badge badge-mode fs-6 text-bg-' + (MODE_COLOR[s.mode] || 'secondary');
+  document.querySelectorAll('.mode-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === s.mode));
+
+  if (!s.ok) {
+    document.getElementById('status').innerHTML =
+      `<div class="alert alert-danger mb-0">${esc(s.error)}</div>`; return;
+  }
+  const caps = (s.capabilities || []).map(([n, ok]) => capRow(n, ok)).join('');
+  const rows = (s.tables || []).map(t => `
+    <tr><td class="mono">${esc(t.table)}</td>
+        <td class="small text-body-secondary">${esc(t.label)}</td>
+        <td class="num">${fmt(t.rows)}</td>
+        <td class="text-center">${t.ct ? '<span class="badge text-bg-primary">CT</span>' : '<span class="text-body-tertiary">—</span>'}</td>
+        <td class="text-center">${t.cdc ? '<span class="badge text-bg-success">CDC</span>' : '<span class="text-body-tertiary">—</span>'}</td>
+        <td class="num small text-body-secondary">${t.ct_min_version ?? ''}</td></tr>`).join('');
+  document.getElementById('status').innerHTML = `
+    <div class="mono small text-body-secondary mb-1">${esc(s.target)}</div>
+    <div class="small mb-2">${esc(s.db_type)}</div>
+    <div class="small mb-3">${caps}</div>
+    ${s.cdc_message ? `<div class="alert ${s.cdc_healthy ? 'alert-success' : 'alert-warning'} py-2 small">${esc(s.cdc_message)}</div>` : ''}
+    <div class="scroll-x"><table class="table table-sm mb-0">
+      <thead><tr><th>Table</th><th></th><th class="num">Rows</th><th class="text-center">CT</th>
+      <th class="text-center">CDC</th><th class="num">CT min ver</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+
+document.querySelectorAll('.mode-btn').forEach(btn => btn.onclick = async () => {
+  const mode = btn.dataset.mode;
+  if (!confirm(`Arm ${SYSTEM} for ${mode}?\n\nIts watermarks are cleared, so the next read baselines.`)) return;
+  await con.run('/api/mode', {system: SYSTEM, strategy: mode}, [...document.querySelectorAll('.mode-btn')]);
+  refresh();
+});
+document.getElementById('btn-run').onclick = async () => {
+  await con.run('/api/etl/run', {system: SYSTEM}, [document.getElementById('btn-run')]);
+  refresh(); browser.load();
+};
+
+refresh(); browser.load();
+</script>
+{% endblock %}

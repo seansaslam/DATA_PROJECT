@@ -1,0 +1,169 @@
+{% load static %}<!doctype html>
+<html lang="en" data-bs-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ company }}{% endblock %}</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  :root{
+    --cct:#0f766e; --cct-dark:#0b3b39; --ink:#0f172a; --muted:#64748b;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
+  }
+  body{background:#f6f7f9;color:var(--ink);font-size:14px;}
+  .navbar-cct{background:linear-gradient(90deg,var(--cct-dark),var(--cct));}
+  .navbar-cct .navbar-brand{font-weight:700;letter-spacing:.3px;}
+  .navbar-cct .nav-link{color:#d7ece9;font-weight:500;}
+  .navbar-cct .nav-link:hover{color:#fff;}
+  .navbar-cct .nav-link.active{color:#fff;background:rgba(255,255,255,.16);border-radius:6px;}
+  .mono{font-family:var(--mono);}
+  .card{border:1px solid #e2e8f0;box-shadow:0 1px 2px rgba(15,23,42,.04);}
+  .card-header{background:#fff;border-bottom:1px solid #e9edf2;font-weight:600;}
+  .eyebrow{font-size:11px;letter-spacing:1.1px;text-transform:uppercase;color:var(--muted);font-weight:700;}
+  .stat{font-size:26px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;}
+  .stat-sm{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .num{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums;}
+  .badge-mode{font-family:var(--mono);letter-spacing:.6px;}
+  .console{background:#0b1220;color:#dbe3ee;font-family:var(--mono);font-size:12px;
+           line-height:1.65;border-radius:8px;padding:12px 14px;height:300px;overflow-y:auto;
+           white-space:pre-wrap;}
+  .console .er{color:#fda4af;} .console .ok{color:#86efac;} .console .hd{color:#7dd3fc;}
+  .table-sm td,.table-sm th{padding:.35rem .5rem;}
+  .table-records{font-size:12.5px;} .table-records td{white-space:nowrap;font-family:var(--mono);}
+  .table-records th{white-space:nowrap;font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);}
+  .scroll-x{overflow-x:auto;}
+  .sys-wm{--tone:#1d4ed8;} .sys-pc{--tone:#b45309;} .sys-ac{--tone:#047857;} .sys-dw{--tone:#6d28d9;}
+  .tone-bar{height:4px;background:var(--tone,#0f766e);border-radius:8px 8px 0 0;}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+  .dot-ok{background:#16a34a;} .dot-bad{background:#dc2626;} .dot-idle{background:#cbd5e1;}
+  .erd-svg{width:100%;height:auto;background:#fff;border:1px solid #e2e8f0;border-radius:10px;}
+  .sticky-actions{position:sticky;top:0;z-index:5;}
+  code.kbd{background:#eef2f7;border:1px solid #dbe3ec;border-radius:4px;padding:1px 5px;font-size:12px;}
+</style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark navbar-cct mb-4">
+  <div class="container-fluid px-4">
+    <a class="navbar-brand" href="/">CCT Oil &amp; Cattle <span class="opacity-75 fw-normal">| source simulator</span></a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
+      <span class="navbar-toggler-icon"></span></button>
+    <div class="collapse navbar-collapse" id="nav">
+      <ul class="navbar-nav me-auto">
+        <li class="nav-item"><a class="nav-link {% if active == 'dashboard' %}active{% endif %}" href="/">Dashboard</a></li>
+        <li class="nav-item"><a class="nav-link {% if active == 'etl' %}active{% endif %}" href="/etl/">Change feed</a></li>
+        {% for s in systems %}
+        <li class="nav-item"><a class="nav-link {% if active == s.key %}active{% endif %}"
+            href="/system/{{ s.key }}/">{{ s.label }}</a></li>
+        {% endfor %}
+        <li class="nav-item"><a class="nav-link {% if active == 'docs' %}active{% endif %}" href="/docs/">Data dictionary &amp; ERD</a></li>
+      </ul>
+      <ul class="navbar-nav">
+        <li class="nav-item"><span class="nav-link" id="nav-ticker">
+          <span class="dot {% if ticker.running %}dot-ok{% else %}dot-idle{% endif %}"></span>
+          <span class="ms-1">{% if ticker.running %}live &middot; {{ ticker.interval }}s{% else %}idle{% endif %}</span>
+        </span></li>
+        <li class="nav-item"><a class="nav-link {% if active == 'connections' %}active{% endif %}"
+            href="/connections/">&#9881; Connections</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid px-4 pb-5">
+  {% block content %}{% endblock %}
+</div>
+
+<form id="csrf-form">{% csrf_token %}</form>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+const CSRF = document.querySelector('#csrf-form [name=csrfmiddlewaretoken]').value;
+
+const fmt = n => (n === null || n === undefined || n < 0) ? '&mdash;' : Number(n).toLocaleString();
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function post(url, data = {}) {
+  const body = new URLSearchParams();
+  for (const [k, v] of Object.entries(data)) {
+    if (Array.isArray(v)) v.forEach(x => body.append(k, x)); else body.append(k, v);
+  }
+  const r = await fetch(url, {method:'POST', headers:{'X-CSRFToken':CSRF}, body});
+  return r.json();
+}
+async function get(url) { const r = await fetch(url); return r.json(); }
+
+/* A console pane that streams a background job's log. */
+class JobConsole {
+  constructor(el) { this.el = el; this.busy = false; }
+  write(line, cls = '') {
+    const span = document.createElement('span');
+    span.className = cls; span.textContent = line + '\n';
+    this.el.appendChild(span); this.el.scrollTop = this.el.scrollHeight;
+  }
+  clear() { this.el.textContent = ''; }
+  async run(url, data, buttons = []) {
+    if (this.busy) { this.write('a job is already running', 'er'); return null; }
+    this.busy = true; buttons.forEach(b => b.disabled = true);
+    try {
+      const started = await post(url, data);
+      if (!started.ok) { this.write(started.error || 'failed to start', 'er'); return null; }
+      let since = 0, job = started.job;
+      this.write('> ' + job.name, 'hd');
+      while (true) {
+        const r = await get(`/api/job/${job.id}?since=${since}`);
+        if (!r.ok) { this.write('lost the job', 'er'); break; }
+        job = r.job;
+        job.lines.forEach(l => this.write(l, /FAILED|error/i.test(l) ? 'er' : ''));
+        since = job.total_lines;
+        if (job.status !== 'running') {
+          this.write(`[${job.status}] ${job.elapsed}s`, job.status === 'done' ? 'ok' : 'er');
+          return job;
+        }
+        await new Promise(r => setTimeout(r, 700));
+      }
+    } finally { this.busy = false; buttons.forEach(b => b.disabled = false); }
+    return null;
+  }
+}
+
+/* A paged, searchable record browser bound to /api/records/<system>/<table>. */
+class RecordBrowser {
+  constructor(root, system) {
+    this.root = root; this.system = system;
+    this.table = root.dataset.table; this.page = 1; this.size = 50; this.q = '';
+    this.head = root.querySelector('[data-role=head]');
+    this.body = root.querySelector('[data-role=body]');
+    this.info = root.querySelector('[data-role=info]');
+    root.querySelector('[data-role=prev]').onclick = () => { if (this.page > 1) { this.page--; this.load(); } };
+    root.querySelector('[data-role=next]').onclick = () => { this.page++; this.load(); };
+    const search = root.querySelector('[data-role=q]');
+    if (search) {
+      let t; search.oninput = () => { clearTimeout(t); t = setTimeout(() => {
+        this.q = search.value; this.page = 1; this.load(); }, 350); };
+    }
+    const sel = root.querySelector('[data-role=table]');
+    if (sel) sel.onchange = () => { this.table = sel.value; this.page = 1; this.load(); };
+    const size = root.querySelector('[data-role=size]');
+    if (size) size.onchange = () => { this.size = +size.value; this.page = 1; this.load(); };
+  }
+  async load() {
+    this.info.textContent = 'loading ...';
+    const url = `/api/records/${this.system}/${this.table}?page=${this.page}&size=${this.size}&q=${encodeURIComponent(this.q)}`;
+    const r = await get(url);
+    if (!r.ok) {
+      this.head.innerHTML = ''; this.body.innerHTML =
+        `<tr><td class="text-danger p-3">${esc(r.error)}</td></tr>`;
+      this.info.textContent = ''; return;
+    }
+    this.head.innerHTML = '<tr>' + r.columns.map(c =>
+      `<th${r.pk.includes(c) ? ' class="text-primary"' : ''}>${esc(c)}</th>`).join('') + '</tr>';
+    this.body.innerHTML = r.rows.length
+      ? r.rows.map(row => '<tr>' + row.map(v => `<td>${v === null
+          ? '<span class="text-body-tertiary">NULL</span>' : esc(v)}</td>`).join('') + '</tr>').join('')
+      : '<tr><td class="p-3 text-body-secondary">no rows match</td></tr>';
+    this.info.innerHTML = `<strong>${fmt(r.total)}</strong> rows &middot; page ${r.page} of ${fmt(r.pages)}`;
+  }
+}
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

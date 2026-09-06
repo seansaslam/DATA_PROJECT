@@ -1,0 +1,186 @@
+{% extends "core/base.html" %}
+{% block title %}Change feed &middot; {{ company }}{% endblock %}
+{% block content %}
+
+<h1 class="h4 mb-1">Change feed</h1>
+<p class="text-body-secondary mb-3" style="max-width:90ch">
+  Arm each source the way an ingestion tool needs it, then answer the question that
+  actually decides a pipeline design: <em>if this ran right now, how many rows would it
+  move, and would it catch the deletes?</em> Nothing is written anywhere &mdash; the read
+  extracts, counts and records the number. Each system keeps its own strategy, so you can
+  run the Well Master on <span class="mono">FULL</span> while ProCount runs on
+  <span class="mono">CDC</span> and compare them in the same log.
+</p>
+
+<div class="row g-3 mb-3">
+  <div class="col-xl-8">
+    <div class="card h-100">
+      <div class="card-header">Strategy per system</div>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-2">
+            <thead><tr><th>System</th><th>Armed for</th><th>Switch to</th><th></th></tr></thead>
+            <tbody>
+              {% for s in systems %}
+              <tr>
+                <td><a href="/system/{{ s.key }}/" class="text-decoration-none fw-semibold">{{ s.label }}</a>
+                    <div class="small text-body-secondary mono">{{ s.default_database }}</div></td>
+                <td><span class="badge badge-mode text-bg-secondary" data-mode-for="{{ s.key }}">&mdash;</span></td>
+                <td>
+                  <div class="btn-group btn-group-sm">
+                    {% for st in strategies %}
+                    <button class="btn btn-outline-primary mode-btn" data-system="{{ s.key }}" data-mode="{{ st }}">{{ st }}</button>
+                    {% endfor %}
+                  </div>
+                </td>
+                <td class="text-end">
+                  <button class="btn btn-sm btn-primary run-btn" data-system="{{ s.key }}">Read</button>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+          <button class="btn btn-sm btn-success" id="btn-run-all">Read every system</button>
+          <button class="btn btn-sm btn-outline-secondary" id="btn-churn">Simulate operations first</button>
+          <div class="form-check form-switch ms-2">
+            <input class="form-check-input" type="checkbox" id="commit" checked>
+            <label class="form-check-label small" for="commit">advance the watermark</label>
+          </div>
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" id="rebuild">
+            <label class="form-check-label small text-danger-emphasis" for="rebuild">
+              drop &amp; recreate source tables on switch</label>
+          </div>
+        </div>
+        <p class="small text-body-secondary mt-2 mb-0">
+          Turn the watermark off to read the same window repeatedly &mdash; useful for
+          showing that a strategy is deterministic. Switching strategy always clears the
+          watermark, so the next read baselines; the rebuild switch additionally drops and
+          recreates the source tables, which throws the seeded production history away.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-4">
+    <div class="card h-100">
+      <div class="card-header">What each strategy does</div>
+      <div class="card-body small">
+        <p class="mb-2"><span class="badge text-bg-secondary badge-mode">FULL</span>
+          Read every row, every time. Needs nothing enabled on the source and cannot be
+          wrong. The right answer for both master tables.</p>
+        <p class="mb-2"><span class="badge text-bg-info badge-mode">INCREMENTAL</span>
+          <span class="mono">WHERE UPDATED_TS &gt; watermark</span>. Cheapest, and
+          structurally blind to hard deletes &mdash; which is the lesson.</p>
+        <p class="mb-2"><span class="badge text-bg-primary badge-mode">CT</span>
+          Change Tracking. <span class="mono">CHANGETABLE</span> says <em>which</em> rows
+          changed and that a row was deleted, but not what it held, so the reader joins
+          back to the base table. Watermark is a version number.</p>
+        <p class="mb-0"><span class="badge text-bg-success badge-mode">CDC</span>
+          Change Data Capture. The capture table carries the values themselves, so a
+          deleted row's contents survive. Watermark is an LSN. Needs a one-time sysadmin
+          enable and a running Agent on-prem.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">Console</div>
+  <div class="card-body"><div class="console" id="console" style="height:260px"></div></div>
+</div>
+
+<div class="row g-3">
+  <div class="col-xl-5">
+    <div class="card h-100">
+      <div class="card-header">Watermarks <span class="small text-body-secondary fw-normal">
+        &mdash; stored in the app, never in the source</span></div>
+      <div class="card-body p-0">
+        <div class="scroll-x"><table class="table table-sm mb-0 table-records">
+          <thead class="table-light"><tr><th>System</th><th>Table</th><th>Strategy</th>
+            <th class="num">CT ver</th><th>CDC LSN</th><th>High water</th></tr></thead>
+          <tbody id="watermarks"></tbody></table></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-7">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Read history &mdash; compare <span class="mono">rows read</span> across strategies</span>
+        <button class="btn btn-sm btn-outline-secondary py-0" id="btn-refresh">refresh</button>
+      </div>
+      <div class="card-body p-0">
+        <div class="scroll-x" style="max-height:52vh"><table class="table table-sm mb-0 table-records">
+          <thead class="table-light sticky-actions"><tr><th>#</th><th>When</th><th>Table</th><th>Mode</th>
+            <th class="num">rows read</th><th class="num">deletes</th><th class="num">ms</th>
+            <th>Note</th></tr></thead>
+          <tbody id="runs"></tbody></table></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const con = new JobConsole(document.getElementById('console'));
+const MODE_COLOR = {FULL:'secondary', INCREMENTAL:'info', CT:'primary', CDC:'success'};
+const allButtons = () => [...document.querySelectorAll('button')];
+const commit = () => document.getElementById('commit').checked ? '1' : '0';
+
+async function refresh() {
+  const r = await get('/api/etl/status');
+  for (const [k, v] of Object.entries(r.modes || {})) {
+    const el = document.querySelector(`[data-mode-for="${k}"]`);
+    if (el) { el.textContent = v; el.className = 'badge badge-mode text-bg-' + (MODE_COLOR[v] || 'secondary'); }
+    document.querySelectorAll(`.mode-btn[data-system="${k}"]`).forEach(b =>
+      b.classList.toggle('active', b.dataset.mode === v));
+  }
+  document.getElementById('watermarks').innerHTML = (r.watermarks || []).map(w => `
+    <tr><td>${esc(w.system_key)}</td><td>${esc(w.source_table)}</td>
+        <td><span class="badge badge-mode text-bg-${MODE_COLOR[w.strategy] || 'secondary'}">${esc(w.strategy)}</span></td>
+        <td class="num">${w.ct_version ?? ''}</td><td>${esc(w.cdc_lsn ?? '')}</td>
+        <td>${esc(w.high_water_ts ?? '')}</td></tr>`).join('') ||
+    '<tr><td colspan="6" class="p-3 text-body-secondary">no watermarks yet</td></tr>';
+
+  document.getElementById('runs').innerHTML = (r.runs || []).map(x => `
+    <tr><td>${x.id}</td><td>${esc(String(x.run_ts).slice(5, 19))}</td>
+        <td>${esc(x.source_table)}</td>
+        <td><span class="badge badge-mode text-bg-${MODE_COLOR[x.strategy] || 'secondary'}">${esc(x.strategy)}</span>
+            ${x.baseline ? ' <span class="badge text-bg-warning">baseline</span>' : ''}
+            ${x.committed ? '' : ' <span class="badge text-bg-light border">no commit</span>'}</td>
+        <td class="num fw-semibold">${fmt(x.rows_read)}</td>
+        <td class="num ${x.rows_deleted ? 'text-danger fw-semibold' : ''}">${fmt(x.rows_deleted)}</td>
+        <td class="num">${fmt(x.duration_ms)}</td>
+        <td class="small text-body-secondary" style="white-space:normal;max-width:44ch">${esc(x.note || '')}</td></tr>`).join('') ||
+    '<tr><td colspan="8" class="p-3 text-body-secondary">nothing read yet</td></tr>';
+}
+
+document.querySelectorAll('.mode-btn').forEach(b => b.onclick = async () => {
+  const {system, mode} = b.dataset;
+  const rebuild = document.getElementById('rebuild').checked;
+  const warning = rebuild
+    ? '\n\nREBUILD IS ON: the source tables will be dropped and recreated. All seeded production history for this system is lost.'
+    : '\n\nIts watermarks are cleared, so the next read baselines.';
+  if (!confirm(`Arm ${system} for ${mode}?` + warning)) return;
+  await con.run('/api/mode', {system, strategy: mode, rebuild: rebuild ? '1' : '0'}, allButtons());
+  refresh();
+});
+document.querySelectorAll('.run-btn').forEach(b => b.onclick = async () => {
+  await con.run('/api/etl/run', {system: b.dataset.system, commit: commit()}, allButtons()); refresh();
+});
+document.getElementById('btn-run-all').onclick = async () => {
+  await con.run('/api/etl/run', {commit: commit()}, allButtons()); refresh();
+};
+document.getElementById('btn-churn').onclick = async () => {
+  await con.run('/api/churn', {scale: 1}, allButtons()); refresh();
+};
+document.getElementById('btn-refresh').onclick = refresh;
+
+refresh();
+setInterval(refresh, 20000);
+</script>
+{% endblock %}

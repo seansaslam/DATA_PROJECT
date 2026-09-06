@@ -1,0 +1,50 @@
+i need to mimic a multi application back end in oil and gas 
+
+build me an app that can help load and mimic the databases exactly like we did for jde project. i need the abiliuty to change database types for each application database. so have links for each in the navbar use 1 app to host all.  
+
+similar to what we have for jde. basically make a new app and have the http://10.0.0.139:5000/ page for each application i need to know records and be able to c
+for application interface , i need the ability to enter the server credentials like servername, database, username password, port etc. 
+for now just gonna be using the azure sql database and for immediate use the local sql server that the jde project is using. 
+
+
+the company is called CCT Oil & Cattle. this company has around 603 operated and 1400 non-operated wells. the wells are located in texas. 
+
+the company is producing since 2026 so data will need to go back to that time frame. jan 1 
+
+i need multiple databases created 
+
+for each system make a proper data dictornary and erd... enough to hand it over to a data engineer. 
+
+- Well master database.  
+build a slim well master, api being the uwi unique well identifier and like 20 columns 
+like wellname, area, pad, central faciltiy lat long and other genral commonly used atributes. 
+this will be its own database . you will need to populate the dummy data for all 600 operated and 1400 non operated wells  
+this table name should be cct_well_master 
+
+- ProCount - this will be the oil and gas production systmem 
+for now need 3 tables.
+this will be its own database 
+daily table with 2026 daily oil and gas production - this is called well_daily_prod.  have oil, gas , water, ngls, net oil , net gas and net ngls. 
+note you will need to populate all data for operated wells in the daily table. for year to date. use the well master database for operated wells to add 
+some wells will be shut in and producing zero volumes. 
+
+- Aries Production forecast 
+Have 2 tables aries AC_Daily and AC_Propety 
+AC_Daily will have the daily forecast for the wells. use the use the well master database for operated wells to only add forecast for operate wells. 
+some wells will be shut in and producing zero volumes. 
+the ac daily will mostly have same infomration as the well master. 
+
+document everything in a CLAUDE.md file 
+
+in the end i am trying to mimic oil and gas daily production table, where the actual sales volume is coming from procount, the forecast is coming from aries and the well meta data info is coming from well master. 
+
+use the airflow connection that is used in C:\Users\sean\Documents\customcoding\jde_erp 
+
+i have made the 3 new databases. 
+WELL_MASTER_DB
+PROCOUNT_DB
+ARIES_DB
+
+the app should run on django and bootstrap and have a seprate database for each system 
+
+for database i do not want any foregin keys just primary key linkage 
