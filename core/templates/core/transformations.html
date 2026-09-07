@@ -1,0 +1,400 @@
+{% extends "core/base.html" %}
+{% block title %}Transformations &middot; {{ company }}{% endblock %}
+{% block content %}
+
+<style>
+  .tx-toc{position:sticky;top:12px;max-height:calc(100vh - 40px);overflow-y:auto;}
+  .tx-toc a{display:block;padding:2px 0 2px 10px;font-size:12.5px;text-decoration:none;
+            color:var(--muted);border-left:2px solid #e2e8f0;}
+  .tx-toc a:hover{color:var(--cct);border-left-color:var(--cct);}
+  .tx-toc .toc-sec{display:block;font-weight:700;font-size:11px;letter-spacing:.9px;
+                   text-transform:uppercase;color:var(--ink);margin:.75rem 0 .25rem;
+                   padding-left:0;border-left:0;}
+  h2.sec{font-size:19px;font-weight:700;margin:2rem 0 .35rem;padding-top:.5rem;
+         border-top:2px solid #e2e8f0;}
+  .lesson{scroll-margin-top:14px;}
+  .lesson-title{font-size:15.5px;font-weight:700;margin:0;}
+  .lvl-Basic{background:#e0f2fe;color:#075985;}
+  .lvl-Intermediate{background:#ede9fe;color:#5b21b6;}
+  .lvl{font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;
+       padding:2px 7px;border-radius:20px;}
+  .dialect-bar{display:flex;align-items:center;gap:.5rem;padding:.3rem .6rem;
+               border-radius:8px 8px 0 0;font-size:11px;font-weight:700;
+               letter-spacing:.8px;text-transform:uppercase;}
+  .d-mssql{background:#1e293b;color:#a5b4fc;}
+  .d-snow{background:#0c4a6e;color:#bae6fd;}
+  pre.sql{background:#0b1220;color:#dbe3ee;border-radius:0 0 8px 8px;padding:12px 14px;
+          font-size:12px;line-height:1.6;overflow-x:auto;margin:0;}
+  pre.sql .cm{color:#64748b;}
+  .sql-block{margin-bottom:.9rem;}
+  .watch li{margin-bottom:.3rem;}
+
+  /* the scratchpad drawer -- height is dragged on #pad-grip and remembered */
+  #pad{position:fixed;left:0;right:0;bottom:0;z-index:1040;background:#fff;
+       box-shadow:0 -6px 24px rgba(15,23,42,.16);
+       display:none;flex-direction:column;
+       height:46vh;min-height:170px;max-height:92vh;}
+  #pad.open{display:flex;}
+  #pad.dragging{user-select:none;}
+  #pad-grip{flex:0 0 11px;cursor:ns-resize;background:var(--cct);position:relative;
+            touch-action:none;}
+  #pad-grip:hover,#pad-grip:focus-visible{background:var(--cct-dark);outline:none;}
+  #pad-grip::after{content:"";position:absolute;left:50%;top:4px;margin-left:-24px;
+                   width:48px;height:3px;border-radius:2px;background:rgba(255,255,255,.8);}
+  #pad-inner{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+  #pad-editor{font-family:var(--mono);font-size:12.5px;line-height:1.55;width:100%;
+              flex:0 0 auto;height:150px;min-height:56px;resize:vertical;
+              background:#0b1220;color:#dbe3ee;border:0;border-radius:8px;padding:10px 12px;
+              white-space:pre;overflow-wrap:normal;overflow-x:auto;}
+  #pad-editor:focus{outline:2px solid var(--cct);}
+  #pad-results{flex:1 1 auto;min-height:0;overflow:auto;}
+  #pad-hint{position:fixed;left:50%;transform:translateX(-50%);z-index:1050;display:none;
+            background:var(--cct-dark);color:#fff;font-size:11px;font-weight:600;
+            padding:3px 11px;border-radius:20px;pointer-events:none;
+            font-variant-numeric:tabular-nums;}
+  #pad-hint.show{display:block;}
+  #pad-results table{font-size:12px;}
+  #pad-results td{font-family:var(--mono);white-space:nowrap;}
+  #pad-results th{white-space:nowrap;font-size:10.5px;letter-spacing:.5px;
+                  text-transform:uppercase;color:var(--muted);position:sticky;top:0;
+                  background:#f8fafc;z-index:2;}
+  @media print{ .no-print,#pad{display:none !important;} pre.sql{border:1px solid #cbd5e1;} }
+</style>
+
+<div class="d-flex flex-wrap align-items-baseline gap-3 mb-1">
+  <h1 class="h4 mb-0">Transformations</h1>
+  <span class="text-body-secondary">SQL against the three sources &mdash; basics through
+    intermediate, in both dialects</span>
+  <div class="ms-auto d-flex gap-2 no-print">
+    <button class="btn btn-sm btn-outline-secondary" onclick="window.print()">Print / PDF</button>
+    <button class="btn btn-sm btn-primary" id="btn-pad">Open SQL scratchpad</button>
+  </div>
+</div>
+
+<p class="text-body-secondary mb-3" style="max-width:96ch">
+  The <a href="/docs/">data dictionary</a> says what the columns are and how the three
+  systems relate. This page is the layer underneath: the SQL itself, written twice &mdash;
+  once as <strong>T-SQL</strong> against these SQL Server sources, and once as it would
+  look in <strong>Snowflake</strong> after ADF or Fivetran has landed the same tables.
+  Every SQL&nbsp;Server example is fully qualified against your live connection profiles,
+  so <span class="mono">Run</span> executes it as written. The scratchpad is read-only:
+  it will run a single <span class="mono">SELECT</span> or
+  <span class="mono">WITH</span> and refuses anything that writes.
+</p>
+
+<div class="row g-3">
+  <!-- ======================================================= contents -->
+  <div class="col-xl-2 d-none d-xl-block no-print">
+    <div class="tx-toc">
+      <div class="card mb-2"><div class="card-body p-2">
+        <input class="form-control form-control-sm mb-2" id="tx-search" placeholder="filter lessons ...">
+        <div class="btn-group btn-group-sm w-100" role="group">
+          <button class="btn btn-outline-secondary lvl-btn active" data-level="">All</button>
+          {% for lv in levels %}
+          <button class="btn btn-outline-secondary lvl-btn" data-level="{{ lv }}">{{ lv }}</button>
+          {% endfor %}
+        </div>
+      </div></div>
+      {% for s in sections %}
+      <a class="toc-sec" href="#s-{{ s.slug }}">{{ s.title }}</a>
+      {% for l in s.lessons %}
+      <a href="#l-{{ l.slug }}" data-toc="{{ l.slug }}">{{ l.title }}</a>
+      {% endfor %}
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ======================================================== lessons -->
+  <div class="col-xl-10">
+    <div class="alert alert-light border py-2 small mb-3" style="max-width:110ch">
+      <strong>How to read a lesson.</strong> Title, then what the transformation is for
+      and where it bites, then the SQL Server syntax, then the Snowflake syntax. Where the
+      two blocks differ, the difference is called out underneath. Copy either one; run the
+      SQL Server one.
+      <span class="text-body-secondary">Connections in use:</span>
+      {% for t in run_targets %}<span class="mono">{{ t.database }}</span>{% if not forloop.last %} &middot; {% endif %}{% endfor %}
+    </div>
+
+    {% for s in sections %}
+    <h2 class="sec" id="s-{{ s.slug }}">{{ s.title }}</h2>
+    <p class="text-body-secondary" style="max-width:96ch">{{ s.blurb }}</p>
+
+    {% for l in s.lessons %}
+    <div class="card mb-3 lesson" id="l-{{ l.slug }}" data-level="{{ l.level }}"
+         data-search="{{ l.title|lower }} {{ l.description|lower }}">
+      <div class="card-header d-flex flex-wrap align-items-center gap-2">
+        <h3 class="lesson-title">{{ l.title }}</h3>
+        <span class="lvl lvl-{{ l.level }}">{{ l.level }}</span>
+        <a class="ms-auto small text-decoration-none text-body-tertiary no-print"
+           href="#l-{{ l.slug }}" title="link to this lesson">#{{ l.slug }}</a>
+      </div>
+      <div class="card-body">
+        <p class="mb-3" style="max-width:96ch">{{ l.description }}</p>
+
+        <div class="sql-block">
+          <div class="dialect-bar d-mssql">
+            <span>SQL Server &mdash; T-SQL</span>
+            <span class="ms-auto d-flex gap-2 no-print">
+              <button class="btn btn-sm btn-outline-light py-0 px-2 btn-copy"
+                      data-target="sql-{{ l.slug }}-ms">Copy</button>
+              {% if l.runnable %}
+              <button class="btn btn-sm btn-light py-0 px-2 btn-run"
+                      data-target="sql-{{ l.slug }}-ms" data-system="{{ l.system }}">Run</button>
+              {% else %}
+              <span class="badge text-bg-warning">writes &mdash; read only here</span>
+              {% endif %}
+            </span>
+          </div>
+          <pre class="sql" id="sql-{{ l.slug }}-ms">{{ l.tsql }}</pre>
+        </div>
+
+        <div class="sql-block">
+          <div class="dialect-bar d-snow">
+            <span>Snowflake</span>
+            <span class="ms-auto d-flex gap-2 no-print">
+              <button class="btn btn-sm btn-outline-light py-0 px-2 btn-copy"
+                      data-target="sql-{{ l.slug }}-sf">Copy</button>
+              <span class="badge text-bg-secondary" title="there is no warehouse in this project">
+                target dialect</span>
+            </span>
+          </div>
+          <pre class="sql" id="sql-{{ l.slug }}-sf">{{ l.snowflake }}</pre>
+        </div>
+
+        {% if l.notes %}
+        <div class="eyebrow mb-1">Watch out</div>
+        <ul class="small watch mb-0">
+          {% for n in l.notes %}<li>{{ n }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    {% endfor %}
+
+    <div id="tx-empty" class="alert alert-secondary d-none">Nothing matches that filter.</div>
+  </div>
+</div>
+
+<div id="pad-spacer" style="height:0"></div>
+
+<!-- ========================================================= scratchpad -->
+<div id="pad" class="no-print">
+  <div id="pad-grip" tabindex="0" role="separator" aria-orientation="horizontal"
+       aria-label="Resize the scratchpad -- drag, or use the arrow keys"
+       title="Drag up or down to resize &middot; double-click to reset"></div>
+  <div id="pad-inner" class="container-fluid px-4 pb-2 pt-2">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+      <strong class="me-1">SQL scratchpad</strong>
+      <span class="badge text-bg-light border">read-only &mdash; SELECT / WITH, one statement</span>
+      <span class="small text-body-tertiary d-none d-lg-inline">drag the green bar to resize</span>
+      <label class="small text-body-secondary ms-2">run against</label>
+      <select class="form-select form-select-sm w-auto" id="pad-system">
+        {% for t in run_targets %}
+        <option value="{{ t.key }}" {% if t.key == default_target %}selected{% endif %}>
+          {{ t.label }} &mdash; {{ t.database }}</option>
+        {% endfor %}
+      </select>
+      <label class="small text-body-secondary ms-1">rows</label>
+      <select class="form-select form-select-sm w-auto" id="pad-limit">
+        <option>100</option><option selected>200</option>
+        <option>500</option><option>1000</option>
+      </select>
+      <button class="btn btn-sm btn-primary" id="pad-run">Run <span class="opacity-75">(Ctrl+Enter)</span></button>
+      <button class="btn btn-sm btn-outline-secondary" id="pad-clear">Clear</button>
+      <span class="small text-body-secondary ms-2" id="pad-status"></span>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" id="pad-close">Close</button>
+    </div>
+    <textarea id="pad-editor" spellcheck="false"
+              placeholder="SELECT TOP 10 * FROM ..."></textarea>
+    <div id="pad-results" class="mt-2"></div>
+  </div>
+</div>
+<!-- live pixel readout while the grip is being dragged; filled by setPadHeight -->
+<div id="pad-hint" class="no-print"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const pad       = document.getElementById('pad');
+const padEditor = document.getElementById('pad-editor');
+const padStatus = document.getElementById('pad-status');
+const padOut    = document.getElementById('pad-results');
+const padSystem = document.getElementById('pad-system');
+const padLimit  = document.getElementById('pad-limit');
+const spacer    = document.getElementById('pad-spacer');
+const grip      = document.getElementById('pad-grip');
+const hint      = document.getElementById('pad-hint');
+
+/* ---- drawer height: dragged on the grip, remembered per browser ---------- */
+const PAD_KEY = 'cct.scratchpad.height';
+const PAD_MIN = 170;
+const padMax  = () => Math.round(window.innerHeight * 0.92);
+const padDefault = () => Math.round(window.innerHeight * 0.46);
+
+// Held here rather than read back from offsetHeight, which is 0 while the drawer
+// is closed -- a window resize would otherwise collapse the remembered size.
+let padH = padDefault();
+
+function setPadHeight(px, remember = true) {
+  padH = Math.max(PAD_MIN, Math.min(padMax(), Math.round(px)));
+  pad.style.height = padH + 'px';
+  if (remember) { try { localStorage.setItem(PAD_KEY, String(padH)); } catch (e) {} }
+  if (pad.classList.contains('open')) spacer.style.height = (padH + 16) + 'px';
+  hint.style.bottom = (padH + 10) + 'px';
+  hint.textContent = padH + ' px';
+  return padH;
+}
+
+// Restore last size, clamped on read because the window may be smaller now.
+let restored = padDefault();
+try {
+  const saved = parseInt(localStorage.getItem(PAD_KEY), 10);
+  if (Number.isFinite(saved)) restored = saved;
+} catch (e) {}
+setPadHeight(restored, false);
+
+let dragFrom = null;
+grip.addEventListener('pointerdown', e => {
+  dragFrom = {y: e.clientY, h: padH};
+  grip.setPointerCapture(e.pointerId);
+  pad.classList.add('dragging');
+  hint.classList.add('show');
+  e.preventDefault();
+});
+grip.addEventListener('pointermove', e => {
+  if (!dragFrom) return;
+  setPadHeight(dragFrom.h + (dragFrom.y - e.clientY));   // drag up = taller
+});
+function endDrag(e) {
+  if (!dragFrom) return;
+  dragFrom = null;
+  if (e && e.pointerId !== undefined && grip.hasPointerCapture(e.pointerId)) {
+    grip.releasePointerCapture(e.pointerId);
+  }
+  pad.classList.remove('dragging');
+  hint.classList.remove('show');
+}
+grip.addEventListener('pointerup', endDrag);
+grip.addEventListener('pointercancel', endDrag);
+
+grip.addEventListener('dblclick', () => setPadHeight(padDefault()));
+grip.addEventListener('keydown', e => {                  // keyboard resize
+  const step = e.shiftKey ? 100 : 24;
+  if (e.key === 'ArrowUp')        { e.preventDefault(); setPadHeight(padH + step); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); setPadHeight(padH - step); }
+  else if (e.key === 'Home')      { e.preventDefault(); setPadHeight(padMax()); }
+  else if (e.key === 'End')       { e.preventDefault(); setPadHeight(PAD_MIN); }
+});
+// A shrinking window must not leave the drawer taller than the viewport. Re-clamp
+// without remembering, so the stored size survives a temporarily small window.
+window.addEventListener('resize', () => setPadHeight(padH, false));
+
+function padOpen(open = true) {
+  pad.classList.toggle('open', open);
+  document.body.classList.toggle('pad-open', open);
+  spacer.style.height = open ? (padH + 16) + 'px' : '0';
+}
+document.getElementById('btn-pad').onclick   = () => { padOpen(true); padEditor.focus(); };
+document.getElementById('pad-close').onclick = () => padOpen(false);
+document.getElementById('pad-clear').onclick = () => {
+  padEditor.value = ''; padOut.innerHTML = ''; padStatus.textContent = ''; padEditor.focus();
+};
+
+/* Copy -- the SQL lives in the <pre>, so nothing has to be serialised twice. */
+document.querySelectorAll('.btn-copy').forEach(b => b.onclick = async () => {
+  const sql = document.getElementById(b.dataset.target).textContent;
+  try {
+    await navigator.clipboard.writeText(sql);
+  } catch (e) {                                   // clipboard API needs a secure context
+    const ta = document.createElement('textarea');
+    ta.value = sql; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+  }
+  const was = b.textContent; b.textContent = 'Copied';
+  setTimeout(() => { b.textContent = was; }, 1200);
+});
+
+/* Run -- load the lesson into the scratchpad, then execute it there, so the
+   next thing anyone does is edit it. */
+document.querySelectorAll('.btn-run').forEach(b => b.onclick = () => {
+  padEditor.value = document.getElementById(b.dataset.target).textContent;
+  padSystem.value = b.dataset.system;
+  padOpen(true);
+  runPad();
+});
+
+let running = false;
+async function runPad() {
+  if (running) return;
+  const sql = padEditor.value.trim();
+  if (!sql) { padStatus.textContent = 'nothing to run'; return; }
+  running = true;
+  padStatus.innerHTML = '<span class="spinner-border spinner-border-sm"></span> running ...';
+  padOut.innerHTML = '';
+  try {
+    const r = await post('/api/query',
+                         {system: padSystem.value, sql, limit: padLimit.value});
+    if (!r.ok) {
+      padStatus.textContent = '';
+      padOut.innerHTML =
+        `<div class="alert ${r.refused ? 'alert-warning' : 'alert-danger'} py-2 small mb-0">
+           ${esc(r.error)}</div>`;
+      return;
+    }
+    padStatus.innerHTML =
+      `<span class="text-success">${fmt(r.row_count)} row${r.row_count === 1 ? '' : 's'}</span>
+       &middot; ${fmt(r.elapsed_ms)} ms &middot; <span class="mono">${esc(r.target)}</span>
+       ${r.truncated ? '&middot; <span class="text-warning-emphasis">truncated at the row limit</span>' : ''}`;
+    padOut.innerHTML = r.rows.length
+      ? `<table class="table table-sm table-striped mb-0">
+           <thead><tr>${r.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+           <tbody>${r.rows.map(row => '<tr>' + row.map(v => `<td>${v === null
+              ? '<span class="text-body-tertiary">NULL</span>' : esc(v)}</td>`).join('') +
+              '</tr>').join('')}</tbody></table>`
+      : '<div class="p-3 small text-body-secondary">the query ran and returned no rows</div>';
+  } finally {
+    running = false;
+    padOpen(true);            // the results pane scrolls inside the drawer, so the
+  }                           // drawer's own height is whatever the user dragged it to
+}
+document.getElementById('pad-run').onclick = runPad;
+padEditor.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runPad(); }
+  if (e.key === 'Tab') {                           // a tab should indent, not leave the box
+    e.preventDefault();
+    const s = padEditor.selectionStart, t = padEditor.selectionEnd;
+    padEditor.value = padEditor.value.slice(0, s) + '    ' + padEditor.value.slice(t);
+    padEditor.selectionStart = padEditor.selectionEnd = s + 4;
+  }
+});
+
+/* Filter by level and free text. */
+const lessons = [...document.querySelectorAll('.lesson')];
+const search  = document.getElementById('tx-search');
+const empty   = document.getElementById('tx-empty');
+let level = '';
+
+function applyFilter() {
+  const q = search.value.trim().toLowerCase();
+  let shown = 0;
+  lessons.forEach(el => {
+    const ok = (!level || el.dataset.level === level) &&
+               (!q || el.dataset.search.includes(q));
+    el.classList.toggle('d-none', !ok);
+    const toc = document.querySelector(`[data-toc="${el.id.slice(2)}"]`);
+    if (toc) toc.classList.toggle('d-none', !ok);
+    if (ok) shown++;
+  });
+  empty.classList.toggle('d-none', shown > 0);
+}
+search.oninput = applyFilter;
+document.querySelectorAll('.lvl-btn').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.lvl-btn').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  level = b.dataset.level;
+  applyFilter();
+});
+</script>
+{% endblock %}

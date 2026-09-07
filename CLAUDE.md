@@ -76,6 +76,7 @@ ac.AC_DAILY             220,095    603 wells x 365 days of calendar 2026
 | **Dashboard** | Headline production numbers, per-system connection and tracking state, the simulator controls, live mode |
 | **Well Master / ProCount / ARIES** | Per-application page: its connection, its tables, row counts, change-mechanism state, and a paged searchable record browser |
 | **Change feed** | Arm each system for FULL / INCREMENTAL / CT / CDC, read what a load would pull, compare rows-read across strategies |
+| **Transformations** | A SQL curriculum over these three sources, basics to intermediate: title, description, SQL Server syntax, Snowflake syntax. Copy either; run the T-SQL in the built-in read-only scratchpad |
 | **Data dictionary & ERD** | Live catalog, per-column descriptions, ERD, join recipes, ingestion notes. Prints to PDF |
 | **Connections** | Per-database credentials and type. Save and test |
 
@@ -169,6 +170,37 @@ was off are gone for good, and SQL Server cannot warn you:
 with every table untracked a stale watermark still looks valid. So disabling a mechanism
 also deletes its watermark, forcing the next read to re-baseline. `verify.py` asserts both.
 
+### Transformations page
+
+`documentation/transformations.py` holds 48 lessons in 11 sections, from `SELECT` through
+type conformance, window functions and load patterns. Each is Title -> Description -> **SQL Server syntax**
+-> **Snowflake syntax**, with a "watch out" list for the places the two dialects or the
+data disagree.
+
+Table names in the lesson text are tokens (`{PC_DAILY}`, `{AC_PROP}` ...) expanded per
+dialect at render time, so one text produces both blocks and the T-SQL comes out
+three-part qualified against whatever the Connections page currently points at. That is
+what makes **Run** work: the query executes exactly as displayed, and a cross-database
+join reads `PROCOUNT_DB.pc.well_daily_prod` from the ARIES connection just as it would
+from a client.
+
+The **Types, dates and time zones** section is the one that needs live data to teach:
+`cast-to-join` returns `MATCHED_WITHOUT_CAST = 0` next to `MATCHED_WITH_CAST = 559` on
+one row, because `date` never equals `datetime2(3)`. `AT TIME ZONE` returns
+`datetimeoffset`, which pyodbc cannot decode -- `sqlutil.connect` registers an output
+converter for SQL type -155 so a UTC-to-Central query renders instead of failing.
+
+The scratchpad (`api_query`) is the one place in the app that executes SQL a user typed,
+and it is guarded twice. `_reject_reason` scrubs string literals and comments, then
+requires a single statement starting `SELECT` or `WITH` with no write keyword; the
+statement then runs inside a transaction that is rolled back either way. Lessons that
+write -- `MERGE`, `CREATE VIEW`, `INSERT ... SELECT` -- are marked `runnable=False` and
+shown without a Run button.
+
+`verify.py` executes every runnable lesson against the live source and fails if one no
+longer runs, so a column rename cannot leave broken SQL on the page. It also asserts the
+guard agrees with the `runnable` flag in both directions.
+
 ## Documentation
 
 `/docs/` builds itself from the **live catalog** on every load, so it cannot drift from
@@ -210,6 +242,7 @@ etl/runner.py                 orchestration, mode switching, run history
 documentation/catalog.py      live catalog -> data dictionary + ERD SVG
 documentation/descriptions.py business meaning per column
 documentation/joins.py        join recipes and ingestion notes
+documentation/transformations.py  the SQL curriculum, both dialects
 
 run_app.py                    start the app
 seed_cli.py                   build and load from the command line

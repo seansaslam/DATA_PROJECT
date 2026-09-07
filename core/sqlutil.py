@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import re
+import struct
 
 import pyodbc
 
@@ -10,6 +12,22 @@ import pyodbc
 # but everything still goes through here so that assumption is enforced in one
 # place rather than trusted in twenty.
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+
+# SQL_SS_TIMESTAMPOFFSET. No column in these sources is a datetimeoffset, but
+# AT TIME ZONE returns one, and pyodbc has no built-in decoder -- so any timezone
+# conversion comes back as "ODBC SQL type -155 is not yet supported" rather than
+# a value. The converter is registered on every connection so the transformations
+# scratchpad can run a UTC-to-local query as written.
+_SQL_SS_TIMESTAMPOFFSET = -155
+
+
+def _decode_datetimeoffset(raw: bytes) -> dt.datetime:
+    """20 bytes: y, mo, d, h, mi, s as int16, nanoseconds as uint32, then the
+    offset as two int16."""
+    year, month, day, hour, minute, second, nanos, tz_h, tz_m = struct.unpack(
+        "<6hI2h", raw)
+    return dt.datetime(year, month, day, hour, minute, second, nanos // 1000,
+                       dt.timezone(dt.timedelta(hours=tz_h, minutes=tz_m)))
 
 
 def ident(name: str) -> str:
@@ -34,6 +52,7 @@ def placeholders(n: int) -> str:
 def connect(conn_str: str, autocommit: bool = False):
     """Yield a connection, committing on clean exit and rolling back on error."""
     conn = pyodbc.connect(conn_str, autocommit=autocommit)
+    conn.add_output_converter(_SQL_SS_TIMESTAMPOFFSET, _decode_datetimeoffset)
     try:
         yield conn
         if not autocommit:

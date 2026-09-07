@@ -12,6 +12,8 @@ mechanism an ingestion tool needs, and the documentation to hand over.
 from __future__ import annotations
 
 import datetime as dt
+import re
+import time
 
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
@@ -363,3 +365,137 @@ def docs(request):
                joins=joins.JOIN_RECIPES,
                ingestion=joins.INGESTION_NOTES)
     return render(request, "core/docs.html", ctx)
+
+
+# ---------------------------------------------------------------------------
+# Transformations -- the SQL curriculum, and the scratchpad that runs it
+# ---------------------------------------------------------------------------
+def transformations(request):
+    from documentation import transformations as tx
+
+    def database_for(key: str) -> str:
+        return profile(key).database
+
+    ctx = _nav("transformations")
+    ctx.update(sections=tx.render(database_for),
+               levels=tx.LEVELS,
+               run_targets=[{"key": k, "label": s.label,
+                             "database": profile(k).database}
+                            for k, s in registry.SOURCE_SYSTEMS.items()],
+               default_target="procount")
+    return render(request, "core/transformations.html", ctx)
+
+
+# The scratchpad executes SQL a user typed, which is the one place in this app
+# where that is true. Two independent guards, because either alone is a bad bet:
+#   1. the statement is parsed far enough to prove it is a single read, and
+#   2. it runs inside a transaction that is always rolled back.
+QUERY_ROW_CAP = 1000
+QUERY_TIMEOUT_S = 45
+
+_WRITE_KEYWORDS = re.compile(
+    r"\b(insert|update|delete|drop|alter|create|truncate|merge|into|exec|execute"
+    r"|grant|revoke|deny|backup|restore|shutdown|reconfigure|kill|checkpoint"
+    r"|dbcc|openrowset|openquery|opendatasource|openjson|bulk|waitfor"
+    r"|writetext|updatetext|readtext|sp_[a-z0-9_]*|xp_[a-z0-9_]*)\b",
+    re.IGNORECASE)
+
+
+def _scrub(sql: str) -> str:
+    """Blank out string literals, line comments and block comments.
+
+    Only the scrubbed copy is inspected; the original is what executes. A word
+    inside a comment or a literal must not trip the guard, and a keyword must
+    not be able to hide behind either.
+    """
+    out, i, n = [], 0, len(sql)
+    while i < n:
+        two = sql[i:i + 2]
+        if sql[i] == "'":                       # string literal -> ''
+            j = i + 1
+            while j < n:
+                if sql[j] == "'":
+                    if sql[j:j + 2] == "''":
+                        j += 2
+                        continue
+                    break
+                j += 1
+            out.append("''")
+            i = j + 1
+        elif sql[i] == "[":                     # bracketed identifier -> keep as a word
+            j = sql.find("]", i)
+            j = n if j < 0 else j
+            out.append(sql[i:j + 1])
+            i = j + 1
+        elif two == "--":
+            j = sql.find("\n", i)
+            i = n if j < 0 else j
+        elif two == "/*":
+            j = sql.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            out.append(" ")
+        else:
+            out.append(sql[i])
+            i += 1
+    return "".join(out)
+
+
+def _reject_reason(sql: str) -> str | None:
+    """None if this is a single read-only statement, else why it was refused."""
+    scrubbed = _scrub(sql)
+    statements = [s for s in scrubbed.split(";") if s.strip()]
+    if not statements:
+        return "nothing to run"
+    if len(statements) > 1:
+        return ("the scratchpad runs one statement at a time -- "
+                f"this is {len(statements)}")
+    body = statements[0].strip()
+    if not re.match(r"^(select|with)\b", body, re.IGNORECASE):
+        return "only SELECT and WITH statements can be run here"
+    found = _WRITE_KEYWORDS.search(body)
+    if found:
+        return (f"'{found.group(0).upper()}' is not allowed -- the scratchpad reads, "
+                "it never writes. Copy the SQL into a real client to run it.")
+    return None
+
+
+@require_POST
+def api_query(request):
+    """Run one read-only statement against one source connection and return a grid."""
+    key = request.POST.get("system") or "procount"
+    if key not in registry.SOURCE_SYSTEMS:
+        return JsonResponse({"ok": False, "error": f"unknown system {key!r}"}, status=400)
+
+    sql = (request.POST.get("sql") or "").strip()
+    limit = min(max(int(request.POST.get("limit") or 200), 1), QUERY_ROW_CAP)
+
+    reason = _reject_reason(sql)
+    if reason:
+        return JsonResponse({"ok": False, "error": reason, "refused": True}, status=400)
+
+    started = time.perf_counter()
+    try:
+        # autocommit off, and the transaction is rolled back either way -- so even
+        # if something slipped past the guard it does not survive the call.
+        with connections.open(key, autocommit=False, timeout=QUERY_TIMEOUT_S) as conn:
+            conn.timeout = QUERY_TIMEOUT_S
+            cur = conn.cursor()
+            try:
+                cur.execute(sql)
+                if cur.description is None:
+                    return JsonResponse({"ok": False,
+                                         "error": "that statement returned no result set"},
+                                        status=400)
+                columns = [c[0] for c in cur.description]
+                rows = [[_json_safe(v) for v in r] for r in cur.fetchmany(limit + 1)]
+            finally:
+                conn.rollback()
+    except Exception as exc:
+        return JsonResponse({"ok": False, "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                             "error": f"{type(exc).__name__}: {exc}"}, status=200)
+
+    truncated = len(rows) > limit
+    return JsonResponse({"ok": True, "columns": columns, "rows": rows[:limit],
+                         "row_count": min(len(rows), limit), "truncated": truncated,
+                         "limit": limit, "target": profile(key).describe(),
+                         "elapsed_ms": int((time.perf_counter() - started) * 1000)})

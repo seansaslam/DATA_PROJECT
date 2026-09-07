@@ -8,6 +8,7 @@ urlpatterns = [
     path("etl/", views.etl_console, name="etl"),
     path("connections/", views.connections_page, name="connections"),
     path("docs/", views.docs, name="docs"),
+    path("transformations/", views.transformations, name="transformations"),
 
     # JSON
     path("api/overview", views.api_overview, name="api_overview"),
@@ -23,4 +24,5 @@ urlpatterns = [
     path("api/mode", views.api_mode, name="api_mode"),
     path("api/etl/run", views.api_run_etl, name="api_run_etl"),
     path("api/ticker", views.api_ticker, name="api_ticker"),
+    path("api/query", views.api_query, name="api_query"),
 ]

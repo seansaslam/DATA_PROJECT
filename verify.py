@@ -351,6 +351,67 @@ def check_docs() -> None:
           all(not c["error"] and c["tables"] for c in d.values()))
 
 
+def check_transformations() -> None:
+    """The Transformations page ships SQL people copy and run, so the harness
+    runs it too. A lesson that no longer executes against the deployed schema is
+    a broken lesson, and a column rename is exactly how that happens."""
+    section("transformations")
+    import re as _re
+
+    from core.models import profile
+    from core.views import _reject_reason
+    from documentation import transformations as tx
+
+    sections = tx.render(lambda k: profile(k).database)
+    lessons = [l for s in sections for l in s["lessons"]]
+    check("lessons are defined", len(lessons) > 0, f"{len(lessons)} lessons")
+
+    slugs = [l["slug"] for l in lessons]
+    dupes = {s for s in slugs if slugs.count(s) > 1}
+    check("lesson slugs are unique", not dupes, ", ".join(sorted(dupes)))
+
+    unexpanded = [(l["slug"], m) for l in lessons for d in ("tsql", "snowflake")
+                  for m in _re.findall(r"{[^}]*}", l[d])]
+    check("every table token expands", not unexpanded, str(unexpanded[:4]))
+
+    bad_meta = [l["slug"] for l in lessons
+                if l["system"] not in registry.SOURCE_SYSTEMS or l["level"] not in tx.LEVELS]
+    check("every lesson names a real system and level", not bad_meta,
+          ", ".join(bad_meta[:6]))
+
+    both = [l["slug"] for l in lessons if not l["tsql"].strip() or not l["snowflake"].strip()]
+    check("every lesson carries both dialects", not both, ", ".join(both[:6]))
+
+    # The scratchpad guard has to agree with the runnable flag in both directions:
+    # a lesson offered with a Run button that the guard would refuse is a dead
+    # button, and a write statement the guard would accept is a much worse bug.
+    guard = [(l["slug"], _reject_reason(l["tsql"])) for l in lessons]
+    dead = [s for (s, why), l in zip(guard, lessons) if l["runnable"] and why]
+    check("every runnable lesson passes the read-only guard", not dead,
+          ", ".join(dead[:6]))
+    leaks = [s for (s, why), l in zip(guard, lessons) if not l["runnable"] and not why]
+    check("every write lesson is refused by the guard", not leaks, ", ".join(leaks[:6]))
+
+    failed, empty = [], []
+    for l in lessons:
+        if not l["runnable"]:
+            continue
+        try:
+            with connections.open(l["system"], autocommit=True, timeout=30) as conn:
+                cur = conn.cursor()
+                cur.execute(l["tsql"])
+                if not cur.fetchmany(1):
+                    empty.append(l["slug"])
+        except Exception as exc:
+            failed.append(f"{l['slug']}: {type(exc).__name__}")
+    check("every runnable lesson executes on the source", not failed,
+          "; ".join(failed[:4]))
+    # Empty is not a failure -- the reconciliation lessons return nothing when the
+    # three systems agree, which is the answer they are asking for.
+    if empty:
+        print(f"      note: {len(empty)} lesson(s) returned no rows: {', '.join(empty)}")
+
+
 # ---------------------------------------------------------------------------
 def main() -> int:
     ensure_defaults()
@@ -366,6 +427,7 @@ def main() -> int:
     check_arm_is_verified()
     check_cdc(enabled_only="--cdc" not in sys.argv)
     check_docs()
+    check_transformations()
 
     print("\n" + "=" * 72)
     if _failures:

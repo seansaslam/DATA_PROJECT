@@ -45,6 +45,9 @@ the primary key of exactly one of them — which is the problem the exercise is 
   counts, tracking state, and a searchable record browser
 - **Change feed** — arm FULL / INCREMENTAL / CT / CDC per system and compare what each
   would actually move
+- **Transformations** — 48 SQL lessons over these sources, `SELECT` through casting,
+  time zones, window functions and load patterns, each in both SQL Server and Snowflake,
+  with a copy button and a read-only scratchpad that runs the T-SQL against the source
 - **Data dictionary & ERD** — built from the live catalog; prints to PDF for hand-over
 - **Connections** — per-database credentials and type (SQL Server, Azure SQL, Azure SQL MI)
 
